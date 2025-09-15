@@ -1,0 +1,83 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = 'org.adempiere.tools'
+version = System.getenv("ADEMPIERE_LIBRARY_VERSION") ?: "local-1.0.0"
+def artifactId = 'adempiere-importer-tool'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+    withSourcesJar()
+    withJavadocJar()
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        url = "https://maven.pkg.github.com/jesusalbujas/adempiere-importer-tool"
+        credentials {
+            username = System.getenv("DEPLOY_USER") ?: System.getProperty("deploy.user")
+            password = System.getenv("DEPLOY_TOKEN") ?: System.getProperty("deploy.token")
+        }
+    }
+}
+
+dependencies {
+    api fileTree(dir: 'lib', include: ['*.jar'])
+    api "io.github.adempiere:base:3.9.4.001"
+    implementation 'org.json:json:20210307'
+    
+	// https://mvnrepository.com/artifact/io.github.adempiere/asset
+	implementation("io.github.adempiere:asset:3.9.4.001")}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'ADempiere Importer Tool',
+            'Implementation-Version': version,
+        )
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            groupId = project.group
+            artifactId = artifactId
+            version = project.version
+
+            pom {
+                name = artifactId
+                description = 'ADempiere Importer Tool'
+                url = 'https://github.com/jesusalbujas/adempiere-importer-tool'
+                licenses {
+                    license {
+                        name = 'GNU General Public License v3.0'
+                        url = 'https://www.gnu.org/licenses/gpl-3.0.txt'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'jalbujas'
+                        name = 'Jesús Albujas'
+                        email = 'jesusramirez35000@gmail.com'
+                    }
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            url = uri("https://maven.pkg.github.com/jesusalbujas/adempiere-importer-tool")
+            credentials {
+                username = System.getenv("DEPLOY_USER") ?: System.getProperty("deploy.user")
+                password = System.getenv("DEPLOY_TOKEN") ?: System.getProperty("deploy.token")
+            }
+        }
+    }
+}
