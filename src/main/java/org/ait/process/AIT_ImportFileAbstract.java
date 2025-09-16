@@ -1,0 +1,83 @@
+/******************************************************************************
+ * Product: ADempiere ERP & CRM Smart Business Solution                       *
+ * Copyright (C) 2006-2017 ADempiere Foundation, All Rights Reserved.         *
+ * This program is free software, you can redistribute it and/or modify it    *
+ * under the terms version 2 of the GNU General Public License as published   *
+ * or (at your option) any later version.                                     *
+ * by the Free Software Foundation. This program is distributed in the hope   *
+ * that it will be useful, but WITHOUT ANY WARRANTY, without even the implied *
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.           *
+ * See the GNU General Public License for more details.                       *
+ * You should have received a copy of the GNU General Public License along    *
+ * with this program, if not, write to the Free Software Foundation, Inc.,    *
+ * 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.                     *
+ * For the text or an alternative of this public license, you may reach us    *
+ * or via info@adempiere.net                                                  *
+ * or https://github.com/adempiere/adempiere/blob/develop/license.html        *
+ *****************************************************************************/
+
+package org.ait.process;
+
+import org.compiere.process.SvrProcess;
+
+/** Generated Process for (Import File (AD Tools))
+ *  @author ADempiere (generated) 
+ *  @version Release 3.9.4
+ */
+public abstract class AIT_ImportFileAbstract extends SvrProcess {
+	/** Process Value 	*/
+	private static final String VALUE_FOR_PROCESS = "AIT_ImportFIle";
+	/** Process Name 	*/
+	private static final String NAME_FOR_PROCESS = "Import File (AD Tools)";
+	/** Process Id 	*/
+	private static final int ID_FOR_PROCESS = 1000019;
+	/**	Parameter Name for Attach file	*/
+	public static final String AD_PACKAGE_DIR = "AD_Package_Dir";
+	/**	Parameter Name for Options of Import	*/
+	public static final String AIT_OPTIONS = "AIT_Options";
+	/**	Parameter Value for Attach file	*/
+	private String packageDir;
+	/**	Parameter Value for Options of Import	*/
+	private String options;
+
+	@Override
+	protected void prepare() {
+		packageDir = getParameterAsString(AD_PACKAGE_DIR);
+		options = getParameterAsString(AIT_OPTIONS);
+	}
+
+	/**	 Getter Parameter Value for Attach file	*/
+	protected String getPackageDir() {
+		return packageDir;
+	}
+
+	/**	 Setter Parameter Value for Attach file	*/
+	protected void setPackageDir(String packageDir) {
+		this.packageDir = packageDir;
+	}
+
+	/**	 Getter Parameter Value for Options of Import	*/
+	protected String getOptions() {
+		return options;
+	}
+
+	/**	 Setter Parameter Value for Options of Import	*/
+	protected void setOptions(String options) {
+		this.options = options;
+	}
+
+	/**	 Getter Parameter Value for Process ID	*/
+	public static final int getProcessId() {
+		return ID_FOR_PROCESS;
+	}
+
+	/**	 Getter Parameter Value for Process Value	*/
+	public static final String getProcessValue() {
+		return VALUE_FOR_PROCESS;
+	}
+
+	/**	 Getter Parameter Value for Process Name	*/
+	public static final String getProcessName() {
+		return NAME_FOR_PROCESS;
+	}
+}
