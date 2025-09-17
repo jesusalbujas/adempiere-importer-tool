@@ -4,8 +4,10 @@ import org.ait.model.X_AIT_ImportTemplate;
 import org.compiere.process.SvrProcess;
 import org.compiere.util.DB;
 import org.compiere.util.Env;
+import org.ait.util.AIT_ColumnTypeResolver;
 
 import java.io.File;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.sql.PreparedStatement;
@@ -35,6 +37,7 @@ import java.util.regex.Pattern;
 public class AIT_ImportFile extends AIT_ImportFileAbstract {
 
     private int templateId;
+	private String tableName;
 
     @Override
     protected void prepare() {
@@ -44,6 +47,8 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
 
     @Override
     protected String doIt() throws Exception {
+    	
+    	
         if (templateId <= 0) {
             throw new Exception("No se especificó plantilla de importación");
         }
@@ -51,10 +56,10 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
         X_AIT_ImportTemplate template = new X_AIT_ImportTemplate(getCtx(), templateId, get_TrxName());
 
         // Obtener nombre de la tabla desde la pestaña
-        String tableName = DB.getSQLValueString(get_TrxName(),
+        this.tableName = DB.getSQLValueString(get_TrxName(),
                 "SELECT t.TableName FROM AD_Tab tab " +
-                        "JOIN AD_Table t ON t.AD_Table_ID=tab.AD_Table_ID " +
-                        "WHERE tab.AD_Tab_ID=?", template.getAD_Tab_ID());
+                "JOIN AD_Table t ON t.AD_Table_ID=tab.AD_Table_ID " +
+                "WHERE tab.AD_Tab_ID=?", template.getAD_Tab_ID());
 
         if (tableName == null) {
             throw new Exception("No se encontró tabla para la pestaña " + template.getAD_Tab_ID());
@@ -90,6 +95,7 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
         } else {
             headerTokens = splitPreserveAll(headerLine, separator.charAt(0));
         }
+
 
         // Parsear tokens a estructuras FieldSpec
         List<FieldSpec> fieldSpecs = new ArrayList<>();
@@ -215,33 +221,12 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
             } else {
                 // INSERT
                 // añadimos columnas obligatorias si no vienen en resolvedColumns
-                Map<String, Object> allCols = new LinkedHashMap<>(resolvedColumns);
+                // INSERT
+                Map<String, Object> allCols = addSystemColumns(tableName, resolvedColumns, template);
 
-                // PK nextid
-                int nextId = DB.getSQLValue(get_TrxName(),
-                        "SELECT nextid(" + DB.TO_STRING(tableName) + ", 'N')");
-                allCols.putIfAbsent(tableName + "_ID", nextId);
+                System.out.println("Row " + fileRowNumber + " => " + resolvedColumns);
 
-                // AD_Client_ID, AD_Org_ID prefer template, then CSV, then context
-                allCols.putIfAbsent("AD_Client_ID",
-                        firstNonZero(template.getAD_Client_ID(),
-                                parseIntSafe(String.valueOf(allCols.get("AD_Client_ID"))),
-                                Env.getAD_Client_ID(getCtx())));
-                allCols.putIfAbsent("AD_Org_ID",
-                        firstNonZero(template.getAD_Org_ID(),
-                                parseIntSafe(String.valueOf(allCols.get("AD_Org_ID"))),
-                                Env.getAD_Org_ID(getCtx())));
-
-                int userId = Env.getAD_User_ID(getCtx());
-                Timestamp now = new Timestamp(System.currentTimeMillis());
-
-                allCols.putIfAbsent("Created", firstNonNull(template.getCreated(), now));
-                allCols.putIfAbsent("CreatedBy", firstNonZero(template.getCreatedBy(), userId));
-                allCols.putIfAbsent("Updated", firstNonNull(template.getUpdated(), now));
-                allCols.putIfAbsent("UpdatedBy", firstNonZero(template.getUpdatedBy(), userId));
-                allCols.putIfAbsent("UUID", firstNonNull(template.getUUID(), UUID.randomUUID().toString()));
-
-                // Construir INSERT
+                // Construir INSERT dinámico
                 String sql = "INSERT INTO " + tableName + " (" +
                         String.join(",", allCols.keySet()) + ") VALUES (" +
                         String.join(",", Collections.nCopies(allCols.size(), "?")) + ")";
@@ -290,65 +275,52 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
      *  Si fs tiene lookup (fs.lookupColumn != null) se hará una consulta a la tabla correspondiente.
      *  Lanza Exception con mensaje claro de fila/columna si falla.
      */
+    /** Resuelve el valor final a ser usado para la columna representada por fs con valor rawValue. */
     private Object resolveFieldValue(FieldSpec fs, String rawValue, int fileRowNumber) throws Exception {
-        // (null) explícito
-        if ("(null)".equalsIgnoreCase(rawValue)) {
-            return null;
-        }
-        if (rawValue == null || rawValue.isEmpty()) {
+        if (rawValue == null || rawValue.isEmpty() || "(null)".equalsIgnoreCase(rawValue)) {
             return null;
         }
 
-        // Lookup con path > (relaciones)
+        // Tipo real de columna
+        Class<?> type = AIT_ColumnTypeResolver.getColumnType(this.tableName, fs.targetColumn, get_TrxName());
+
+        // Si es numérico y rawValue es número → usar directo
+        if ((type == Integer.class || type == BigDecimal.class) && rawValue.matches("\\d+")) {
+            return type == Integer.class ? Integer.parseInt(rawValue) : new BigDecimal(rawValue);
+        }
+
+        // Si tiene lookup → buscar
         if (fs.lookupColumn != null) {
             String currentTable;
             String targetColumn = fs.targetColumn;
 
-            // Recorrer path completo
             if (fs.pathParts.length == 1) {
-                // Caso simple: AD_Org_ID[Name]
-                currentTable = fs.targetColumn.substring(0, fs.targetColumn.length() - 3);
+                currentTable = targetColumn.substring(0, targetColumn.length() - 3); // ej: C_BPartner_ID → C_BPartner
             } else {
-                // Caso complejo: AD_User>C_BPartner_ID[Value]
                 currentTable = fs.pathParts[fs.pathParts.length - 2];
             }
 
-            String sqlCount = "SELECT COUNT(*) FROM " + currentTable + " WHERE " + fs.lookupColumn + "=?";
-            int count = DB.getSQLValue(get_TrxName(), sqlCount, rawValue);
-            if (count <= 0) {
+            String sql = "SELECT " + targetColumn + " FROM " + currentTable + " WHERE " + fs.lookupColumn + "=?";
+            Object dbValue = DB.getSQLValue(get_TrxName(), sql, rawValue); // devuelve Integer/BigDecimal según columna
+
+            if (dbValue == null) {
                 throw new Exception("Fila " + fileRowNumber + ", columna " + fs.columnIndex +
                         " (" + fs.original + "): No se encontró valor '" + rawValue +
                         "' en " + currentTable + "." + fs.lookupColumn);
             }
-            if (count > 1) {
-                throw new Exception("Fila " + fileRowNumber + ", columna " + fs.columnIndex +
-                        " (" + fs.original + "): Valor ambiguo, se encontraron " + count +
-                        " registros en " + currentTable + " para " + fs.lookupColumn + "=" + rawValue);
-            }
 
-            // Recuperar valor
-            String sql = "SELECT " + targetColumn + " FROM " + currentTable + " WHERE " + fs.lookupColumn + "=?";
-            return DB.getSQLValueString(get_TrxName(), sql, rawValue);
+            return dbValue; // ya está en el tipo correcto
         }
 
-        // Caso directo con ID
-        if (fs.targetColumn.toUpperCase().endsWith("_ID")) {
-            int id = parseIntSafe(rawValue);
-            if (id <= 0) {
-                throw new Exception("Fila " + fileRowNumber + ", columna " + fs.columnIndex +
-                        " (" + fs.original + "): se esperaba un ID numérico, valor='" + rawValue + "'");
-            }
-            return id;
-        }
-
-        return rawValue;
+        // Caso directo (texto o numérico)
+        return AIT_ColumnTypeResolver.castValue(rawValue, this.tableName, fs.targetColumn, get_TrxName());
     }
 
-    // FieldSpec representa una columna del header con su metadata (lookup, key, path)
+    // FieldSpec represents a header column with its metadata (lookup, key, path)
     private static class FieldSpec {
         final String original;        // token tal cual en header
-        final String[] pathParts;     // si contiene '>' split por '>' (ej AD_User, C_BPartner_ID)
-        final String targetColumn;    // última parte (ej C_BPartner_ID o Name)
+        final String[] pathParts;     // if contains '>', split by '>' (e.g. AD_User, C_BPartner_ID)
+        final String targetColumn;    // last part (e.g. C_BPartner_ID or Name)
         final String lookupColumn;    // si tiene [LookupColumn], ej Name o Value
         final boolean isKey;          // /K
         final int columnIndex;        // posición en header (1-based)
@@ -414,4 +386,60 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
         for (T v : values) if (v != null) return v;
         return null;
     }
+
+    /** Adds mandatory ADempiere system columns to a record before INSERT */
+    private Map<String, Object> addSystemColumns(String tableName, Map<String, Object> resolvedColumns, X_AIT_ImportTemplate template) {
+        Map<String, Object> allCols = new LinkedHashMap<>(resolvedColumns);
+
+        // Primary Key dinámico: <TableName>_ID
+        String pkCol = tableName + "_ID";
+        if (!allCols.containsKey(pkCol)) {
+            
+            int adTableId = DB.getSQLValue(
+            get_TrxName(),
+            "SELECT AD_Table_ID FROM AD_Table WHERE TableName=?", tableName
+            );
+            if (adTableId <= 0) {
+                throw new IllegalArgumentException("No se encontró AD_Table para " + tableName);
+            }
+
+            int nextId = DB.getSQLValue(get_TrxName(),
+            	    "SELECT nextid(" + adTableId + ", 'N')");
+            
+            allCols.put(pkCol, nextId);
+        }
+
+        // Client y Org
+        allCols.putIfAbsent("AD_Client_ID",
+                firstNonZero(template.getAD_Client_ID(),
+                        parseIntSafe(String.valueOf(allCols.get("AD_Client_ID"))),
+                        Env.getAD_Client_ID(getCtx())));
+        allCols.putIfAbsent("AD_Org_ID",
+                firstNonZero(template.getAD_Org_ID(),
+                        parseIntSafe(String.valueOf(allCols.get("AD_Org_ID"))),
+                        Env.getAD_Org_ID(getCtx())));
+        // Si la tabla tiene columna IsActive, y no viene en el archivo, poner 'Y'
+        Integer isActiveCol = DB.getSQLValue(
+                get_TrxName(),
+                "SELECT COUNT(*) FROM AD_Column WHERE AD_Table_ID=(SELECT AD_Table_ID FROM AD_Table WHERE TableName=?) AND ColumnName='IsActive'",
+                tableName);
+        if (isActiveCol != null && isActiveCol > 0) {
+            allCols.putIfAbsent("IsActive", "Y");
+        }
+
+        // Usuario y timestamps
+        int userId = Env.getAD_User_ID(getCtx());
+        Timestamp now = new Timestamp(System.currentTimeMillis());
+
+        allCols.putIfAbsent("Created", now);
+        allCols.putIfAbsent("CreatedBy", userId);
+        allCols.putIfAbsent("Updated", now);
+        allCols.putIfAbsent("UpdatedBy", userId);
+
+        // UUID
+        allCols.putIfAbsent("UUID", UUID.randomUUID().toString());
+
+        return allCols;
+    }
+
 }
