@@ -15,28 +15,12 @@ import java.sql.Timestamp;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
 /**
- * AIT Import File process with advanced header parsing:
- * - header tokens can be:
- *      ColumnName
- *      ColumnName[LookupColumn]
- *      ColumnName/K   (K = unique key in the file)
- *      RelatedTable>ColumnName[LookupColumn]/K
+ * Import File Process
  *
- * - If a token contains [LookupColumn], a lookup will be performed:
- *      SELECT <ColumnName> FROM <Table> WHERE <LookupColumn> = ?
- *   If ColumnName ends with "_ID", it is treated as returning an integer ID.
- *
- * - '/K' in a header (isKey) -> enforces that values in the file are unique 
- *   (an error is raised if duplicates are found).
- *
- * - The first header column is used as the WHERE clause in an UPDATE if 
- *   it has a value in the row; otherwise, a bulk UPDATE is performed by AD_Client_ID.
- *
- * - If a lookup does not find a match, or finds more than one row, 
- *   an Exception is thrown with details about the row/column.
+ * @author Jesús Albujas, @jesusalbujas
  */
+
 public class AIT_ImportFile extends AIT_ImportFileAbstract {
 
     private int templateId;
@@ -53,7 +37,7 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
     	
     	
         if (templateId <= 0) {
-            throw new Exception("No se especificó plantilla de importación");
+            throw new Exception("No import template specified");
         }
 
         X_AIT_ImportTemplate template = new X_AIT_ImportTemplate(getCtx(), templateId, get_TrxName());
@@ -65,7 +49,7 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
                 "WHERE tab.AD_Tab_ID=?", template.getAD_Tab_ID());
 
         if (tableName == null) {
-            throw new Exception("No se encontró tabla para la pestaña " + template.getAD_Tab_ID());
+            throw new Exception("Table not found for tab " + template.getAD_Tab_ID());
         }
 
         // Read UTF-8 file
@@ -308,11 +292,11 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
             String sql = "SELECT " + targetColumn + " FROM " + currentTable + " WHERE " + fs.lookupColumn + "=?";
             Object dbValue = DB.getSQLValue(get_TrxName(), sql, rawValue); // returns Integer/BigDecimal depending on column
 
-                        if (dbValue == null) {
-                            throw new Exception("Row " + fileRowNumber + ", column " + fs.columnIndex +
-                                    " (" + fs.original + "): Value '" + rawValue +
-                                    "' not found in " + currentTable + "." + fs.lookupColumn);
-                        }
+                if (dbValue == null) {
+                    throw new Exception("Row " + fileRowNumber + ", column " + fs.columnIndex +
+                            " (" + fs.original + "): Value '" + rawValue +
+                            "' not found in " + currentTable + "." + fs.lookupColumn);
+                }
 
             return dbValue;
         }
@@ -396,7 +380,7 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
     private Map<String, Object> addSystemColumns(String tableName, Map<String, Object> resolvedColumns, X_AIT_ImportTemplate template) {
         Map<String, Object> allCols = new LinkedHashMap<>(resolvedColumns);
 
-        // Dynamic Primary Key: <TableName>_ID
+        // Dynamic Primary Key: TableName_ID
         String pkCol = tableName + "_ID";
         if (!allCols.containsKey(pkCol)) {
             
