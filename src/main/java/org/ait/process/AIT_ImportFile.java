@@ -21,18 +21,21 @@ import java.util.regex.Pattern;
  * - header tokens can be:
  *      ColumnName
  *      ColumnName[LookupColumn]
- *      ColumnName/K   (K = unique key in file)
+ *      ColumnName/K   (K = unique key in the file)
  *      RelatedTable>ColumnName[LookupColumn]/K
  *
- * - If a token contains [LookupColumn] we will perform a lookup:
+ * - If a token contains [LookupColumn], a lookup will be performed:
  *      SELECT <ColumnName> FROM <Table> WHERE <LookupColumn> = ?
- *   If ColumnName ends with "_ID" we treat it as returning an integer id.
+ *   If ColumnName ends with "_ID", it is treated as returning an integer ID.
  *
- * - '/K' en un header (isKey) -> obliga que los valores en el archivo sean únicos (error si se repiten)
+ * - '/K' in a header (isKey) -> enforces that values in the file are unique 
+ *   (an error is raised if duplicates are found).
  *
- * - Primera columna del header se usa como WHERE en UPDATE si tiene valor en la fila; si no, UPDATE masivo por AD_Client_ID.
+ * - The first header column is used as the WHERE clause in an UPDATE if 
+ *   it has a value in the row; otherwise, a bulk UPDATE is performed by AD_Client_ID.
  *
- * - Si un lookup no encuentra nada, o encuentra >1 fila, se lanza Exception con detalle de fila/columna.
+ * - If a lookup does not find a match, or finds more than one row, 
+ *   an Exception is thrown with details about the row/column.
  */
 public class AIT_ImportFile extends AIT_ImportFileAbstract {
 
@@ -55,7 +58,7 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
 
         X_AIT_ImportTemplate template = new X_AIT_ImportTemplate(getCtx(), templateId, get_TrxName());
 
-        // Obtener nombre de la tabla desde la pestaña
+        // Get table name from tab
         this.tableName = DB.getSQLValueString(get_TrxName(),
                 "SELECT t.TableName FROM AD_Tab tab " +
                 "JOIN AD_Table t ON t.AD_Table_ID=tab.AD_Table_ID " +
@@ -65,39 +68,39 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
             throw new Exception("No se encontró tabla para la pestaña " + template.getAD_Tab_ID());
         }
 
-        // Leer archivo UTF-8
+        // Read UTF-8 file
         File file = new File(getPackageDir());
         if (!file.exists() || !file.isFile()) {
-            throw new Exception("Archivo no encontrado: " + getPackageDir());
+            throw new Exception("File not found: " + getPackageDir());
         }
         List<String> rawLines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
-        // Eliminar líneas que estén vacías (solo espacios) para evitar confusión
+        // Remove lines that are empty (only spaces) to avoid confusion
         List<String> lines = new ArrayList<>();
         for (String L : rawLines) {
             if (L != null && !L.trim().isEmpty()) lines.add(L);
         }
         if (lines.isEmpty()) {
-            throw new Exception("Archivo vacío");
+            throw new Exception("File is empty: " + getPackageDir());
         }
 
-        // Detectar separador en la primera línea de datos (header)
+        // Detect separator in the first line of data (header)
         String headerLine = lines.get(0);
         String separator = ",";
         if (headerLine.contains(";")) separator = ";";
         else if (headerLine.contains("\t")) separator = "\t";
 
-        // Cabeceras: si plantilla tiene AIT_HeaderCSV se usa (separador en plantilla es coma),
-        // si no, se parsea desde archivo con el separador detectado.
+        // Headers: if the template has AIT_HeaderCSV, it is used (the template separator is a comma),
+        // if not, it is parsed from the file with the detected separator.
         List<String> headerTokens;
         if (template.getAIT_HeaderCSV() != null && !template.getAIT_HeaderCSV().isEmpty()) {
-            // la plantilla usa coma como separador para la definición
+            // The template uses comma as separator for the definition
             headerTokens = splitPreserveAll(template.getAIT_HeaderCSV(), ',');
         } else {
             headerTokens = splitPreserveAll(headerLine, separator.charAt(0));
         }
 
 
-        // Parsear tokens a estructuras FieldSpec
+        // Parsing tokens to FieldSpec structures
         List<FieldSpec> fieldSpecs = new ArrayList<>();
         int colIndex = 0;
         for (String t : headerTokens) {
@@ -106,23 +109,23 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
             fieldSpecs.add(fs);
         }
 
-        // --- Prevalidación /K (unicidad en archivo) ---
-        // Para cada FieldSpec con isKey, asegurar que no exista repetido en las filas raw
+        // --- Prevalidation /K (uniqueness in file) ---
+        // For each FieldSpec with isKey, ensure that it is not duplicated in the raw rows
         Map<FieldSpec, Map<String, Integer>> keyValueFirstRow = new HashMap<>();
         for (FieldSpec kfs : fieldSpecs) {
             if (!kfs.isKey) continue;
             keyValueFirstRow.put(kfs, new HashMap<>());
         }
 
-        // Parseear filas crudas en memoria antes de ejecutar acciones para poder validar duplicados
+        // Parsing raw rows into memory before executing actions to be able to validate duplicates
         List<Map<FieldSpec, String>> rawRows = new ArrayList<>();
         for (int i = 1; i < lines.size(); i++) {
             String line = lines.get(i);
             String[] values = line.split(Pattern.quote(separator), -1);
-            // Normalizar (trim) y asegurar cantidad
+            // Normalizing (trimming) and ensuring quantity of columns
             if (values.length < fieldSpecs.size()) {
-                throw new Exception("Fila " + (i + 1) + " incompleta. Esperadas: " + fieldSpecs.size()
-                        + ", encontradas: " + values.length + "  -> Línea: " + line);
+                throw new Exception("Row " + (i + 1) + " incomplete. Expected: " + fieldSpecs.size()
+                        + ", found: " + values.length + "  -> Line: " + line);
             }
             Map<FieldSpec, String> rowMap = new LinkedHashMap<>();
             for (int c = 0; c < fieldSpecs.size(); c++) {
@@ -134,9 +137,9 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
                     Map<String, Integer> seen = keyValueFirstRow.get(f);
                     if (seen.containsKey(raw)) {
                         int firstRow = seen.get(raw);
-                        throw new Exception("Valor repetido de clave en columna '" + f.original +
-                                "' (celda fila " + (i + 1) + "). Valor: '" + raw +
-                                "'. Ya aparece en fila " + firstRow + ".");
+                        throw new Exception("Duplicate key value in column '" + f.original +
+                                "' (cell row " + (i + 1) + "). Value: '" + raw +
+                                "'. Already appears in row " + firstRow + ".");
                     } else {
                         seen.put(raw, i + 0); // store row index (1-based but i starts at 1)
                     }
@@ -148,66 +151,35 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
         int inserted = 0;
         int updated = 0;
 
-        // Ahora procesar fila por fila (resolviendo lookups y ejecutando SQL)
+        // Processing row by row (resolving lookups and executing SQL)
         int fileRowNumber = 1; // header is row 1, data starts at 2 logically; but our rawRows index 0 corresponds to file row 2
         for (int r = 0; r < rawRows.size(); r++) {
             fileRowNumber = r + 2; // human readable: header is 1, first data row is 2
             Map<FieldSpec, String> rawRow = rawRows.get(r);
 
-            // Primero resolvemos valores para columnas del main table (map: columnName -> resolvedValue)
-            // Resolución tiene en cuenta lookups definidos por [LookupCol] o RelatedTable>Column...
+            // First we resolve values ​​for columns in the main table (map: columnName -> ResolvedValue)
+            // Resolution takes into account lookups defined by [LookupCol] or RelatedTable>Column...
             Map<String, Object> resolvedColumns = new LinkedHashMap<>();
             for (FieldSpec fs : fieldSpecs) {
                 String rawValue = rawRow.get(fs);
                 Object resolved = resolveFieldValue(fs, rawValue, fileRowNumber);
-                // Para columnas que representan "directo" (sin '>') asignamos el target column name,
-                // para path we still use the last target token as the column name to set.
-                String dbCol = fs.targetColumn; // ejemplo: AD_Org_ID, Name, pst_employees_id, etc.
+                // For columns that represent "direct" (without '>') we assign the target column name,
+                // for path we still use the last target token as the column name to set.
+                String dbCol = fs.targetColumn; // example: AD_Org_ID, Name, pst_employees_id, etc.
                 resolvedColumns.put(dbCol, resolved);
             }
 
-            // Ahora ejecutar Insert o Update
+            // update
             if ("U".equalsIgnoreCase(getOptions())) {
-                // UPDATE: si la primera columna del header tiene valor -> WHERE con esa columna,
-                // si está vacía -> UPDATE masivo por AD_Client_ID
-                FieldSpec firstFs = fieldSpecs.get(0);
-                String rawWhereValue = rawRow.get(firstFs);
-                Object whereResolved = resolveFieldValue(firstFs, rawWhereValue, fileRowNumber);
-                boolean hasWhere = (whereResolved != null) && (!String.valueOf(whereResolved).isEmpty());
+                List<FieldSpec> keyFields = new ArrayList<>();
+                for (FieldSpec fs : fieldSpecs) {
+                    if (fs.isKey) keyFields.add(fs);
+                }
 
-                if (hasWhere) {
-                    // construir update usando columns excepto la columna de where
-                    String whereCol = firstFs.targetColumn;
-                    Map<String, Object> sets = new LinkedHashMap<>(resolvedColumns);
-                    sets.remove(whereCol);
-
-                    if (sets.isEmpty()) {
-                        // nada que actualizar
-                        continue;
-                    }
-
-                    String sql = buildUpdateSql(tableName, sets.keySet(), whereCol);
-                    try (PreparedStatement pstmt = DB.prepareStatement(sql, get_TrxName())) {
-                        int idx = 1;
-                        for (Object v : sets.values()) {
-                            pstmt.setObject(idx++, v);
-                        }
-                        // where value (posible entero o string)
-                        pstmt.setObject(idx, whereResolved);
-                        int rows = pstmt.executeUpdate();
-                        updated += rows;
-                        if (rows == 0) {
-                            // No se actualizó: eso puede indicar que el where no encontró el registro
-                            throw new Exception("Fila " + fileRowNumber + ": UPDATE no encontró registro con " +
-                                    whereCol + "=" + whereResolved + " (header: " + firstFs.original + ")");
-                        }
-                    }
-                } else {
-                    // UPDATE masivo por AD_Client_ID (usar resolved value del template o contexto)
+                if (keyFields.isEmpty()) {
                     int adClient = firstNonZero(template.getAD_Client_ID(), Env.getAD_Client_ID(getCtx()));
                     Map<String, Object> sets = new LinkedHashMap<>(resolvedColumns);
-                    // No se debe incluir AD_Client_ID en SET si existe; opcional, pero lo dejamos
-                    String sql = buildUpdateSql(tableName, sets.keySet(), "AD_Client_ID");
+                    String sql = buildUpdateSql(tableName, sets.keySet(), Collections.singletonList("AD_Client_ID"));
                     try (PreparedStatement pstmt = DB.prepareStatement(sql, get_TrxName())) {
                         int idx = 1;
                         for (Object v : sets.values()) {
@@ -217,16 +189,45 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
                         int rows = pstmt.executeUpdate();
                         updated += rows;
                     }
+                } else {
+                    Map<String, Object> sets = new LinkedHashMap<>(resolvedColumns);
+                    List<String> whereCols = new ArrayList<>();
+                    List<Object> whereValues = new ArrayList<>();
+                    for (FieldSpec kfs : keyFields) {
+                        String rawValue = rawRow.get(kfs);
+                        Object whereVal = resolveFieldValue(kfs, rawValue, fileRowNumber);
+                        whereCols.add(kfs.targetColumn);
+                        whereValues.add(whereVal);
+                        sets.remove(kfs.targetColumn);
+                    }
+
+                    if (sets.isEmpty()) continue;
+
+                    String sql = buildUpdateSql(tableName, sets.keySet(), whereCols);
+                    try (PreparedStatement pstmt = DB.prepareStatement(sql, get_TrxName())) {
+                        int idx = 1;
+                        for (Object v : sets.values()) {
+                            pstmt.setObject(idx++, v);
+                        }
+                        for (Object wv : whereValues) {
+                            pstmt.setObject(idx++, wv);
+                        }
+                        int rows = pstmt.executeUpdate();
+                        updated += rows;
+                        if (rows == 0) {
+                            throw new Exception("Row " + fileRowNumber +
+                                    ": UPDATE did not find a record with keys " + whereCols + "=" + whereValues);
+                        }
+                    }
                 }
             } else {
                 // INSERT
-                // añadimos columnas obligatorias si no vienen en resolvedColumns
-                // INSERT
+                // Add required columns if they are not included in resolvedColumns
                 Map<String, Object> allCols = addSystemColumns(tableName, resolvedColumns, template);
 
-                System.out.println("Row " + fileRowNumber + " => " + resolvedColumns);
+                // System.out.println("Row " + fileRowNumber + " => " + resolvedColumns);
 
-                // Construir INSERT dinámico
+                // Building dynamic INSERT
                 String sql = "INSERT INTO " + tableName + " (" +
                         String.join(",", allCols.keySet()) + ") VALUES (" +
                         String.join(",", Collections.nCopies(allCols.size(), "?")) + ")";
@@ -239,16 +240,16 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
                     inserted += pstmt.executeUpdate();
                 }
             }
-        } // end filas
+        } // end rows
 
-        return "Importación finalizada. Insertados=" + inserted + ", Actualizados=" + updated;
+        return "Import finished. Inserted=" + inserted + ", Updated=" + updated;
     }
 
     // --------------------
     // Helper & parsing
     // --------------------
 
-    /** Divide respetando todas las columnas (incluso vacías). char sep simple. */
+    /** Splits a string preserving all columns (including empty ones). Simple char separator. */
     private static List<String> splitPreserveAll(String s, char sep) {
         List<String> out = new ArrayList<>();
         if (s == null) return out;
@@ -257,8 +258,8 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
         return out;
     }
 
-    /** Construye SQL UPDATE dinámico con columna WHERE dada */
-    private static String buildUpdateSql(String tableName, Set<String> setCols, String whereCol) {
+    /** Builds dynamic SQL UPDATE with given WHERE columns */
+    private static String buildUpdateSql(String tableName, Set<String> setCols, List<String> whereCols) {
         StringBuilder sb = new StringBuilder();
         sb.append("UPDATE ").append(tableName).append(" SET ");
         boolean first = true;
@@ -267,29 +268,33 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
             sb.append(c).append("=?");
             first = false;
         }
-        sb.append(" WHERE ").append(whereCol).append("=?");
+        sb.append(" WHERE ");
+        for (int i = 0; i < whereCols.size(); i++) {
+            if (i > 0) sb.append(" AND ");
+            sb.append(whereCols.get(i)).append("=?");
+        }
         return sb.toString();
     }
 
-    /** Resuelve el valor final a ser usado para la columna representada por fs con valor rawValue.
-     *  Si fs tiene lookup (fs.lookupColumn != null) se hará una consulta a la tabla correspondiente.
-     *  Lanza Exception con mensaje claro de fila/columna si falla.
+    /** Resolves the final value to be used for the column represented by fs with the given rawValue.
+     *  If fs has a lookup (fs.lookupColumn != null), a query will be made to the corresponding table.
+     *  Throws Exception with a clear message about row/column if it fails.
      */
-    /** Resuelve el valor final a ser usado para la columna representada por fs con valor rawValue. */
+    /** Resolves the final value to be used for the column represented by fs with the given rawValue. */
     private Object resolveFieldValue(FieldSpec fs, String rawValue, int fileRowNumber) throws Exception {
         if (rawValue == null || rawValue.isEmpty() || "(null)".equalsIgnoreCase(rawValue)) {
             return null;
         }
 
-        // Tipo real de columna
+        // Actual column type
         Class<?> type = AIT_ColumnTypeResolver.getColumnType(this.tableName, fs.targetColumn, get_TrxName());
 
-        // Si es numérico y rawValue es número → usar directo
+        // If it's numeric and rawValue is a number → use directly
         if ((type == Integer.class || type == BigDecimal.class) && rawValue.matches("\\d+")) {
             return type == Integer.class ? Integer.parseInt(rawValue) : new BigDecimal(rawValue);
         }
 
-        // Si tiene lookup → buscar
+        // If it has a lookup -> search
         if (fs.lookupColumn != null) {
             String currentTable;
             String targetColumn = fs.targetColumn;
@@ -301,18 +306,18 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
             }
 
             String sql = "SELECT " + targetColumn + " FROM " + currentTable + " WHERE " + fs.lookupColumn + "=?";
-            Object dbValue = DB.getSQLValue(get_TrxName(), sql, rawValue); // devuelve Integer/BigDecimal según columna
+            Object dbValue = DB.getSQLValue(get_TrxName(), sql, rawValue); // returns Integer/BigDecimal depending on column
 
-            if (dbValue == null) {
-                throw new Exception("Fila " + fileRowNumber + ", columna " + fs.columnIndex +
-                        " (" + fs.original + "): No se encontró valor '" + rawValue +
-                        "' en " + currentTable + "." + fs.lookupColumn);
-            }
+                        if (dbValue == null) {
+                            throw new Exception("Row " + fileRowNumber + ", column " + fs.columnIndex +
+                                    " (" + fs.original + "): Value '" + rawValue +
+                                    "' not found in " + currentTable + "." + fs.lookupColumn);
+                        }
 
-            return dbValue; // ya está en el tipo correcto
+            return dbValue;
         }
 
-        // Caso directo (texto o numérico)
+        // Direct case (text or numeric)
         return AIT_ColumnTypeResolver.castValue(rawValue, this.tableName, fs.targetColumn, get_TrxName());
     }
 
@@ -321,9 +326,9 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
         final String original;        // token tal cual en header
         final String[] pathParts;     // if contains '>', split by '>' (e.g. AD_User, C_BPartner_ID)
         final String targetColumn;    // last part (e.g. C_BPartner_ID or Name)
-        final String lookupColumn;    // si tiene [LookupColumn], ej Name o Value
+        final String lookupColumn;    // if has [LookupColumn], e.g. Name or Value
         final boolean isKey;          // /K
-        final int columnIndex;        // posición en header (1-based)
+        final int columnIndex;        // position in header (1-based)
 
         private static final Pattern BRACKETS = Pattern.compile("(.+?)\\[(.+?)\\]");
 
@@ -391,7 +396,7 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
     private Map<String, Object> addSystemColumns(String tableName, Map<String, Object> resolvedColumns, X_AIT_ImportTemplate template) {
         Map<String, Object> allCols = new LinkedHashMap<>(resolvedColumns);
 
-        // Primary Key dinámico: <TableName>_ID
+        // Dynamic Primary Key: <TableName>_ID
         String pkCol = tableName + "_ID";
         if (!allCols.containsKey(pkCol)) {
             
@@ -409,7 +414,7 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
             allCols.put(pkCol, nextId);
         }
 
-        // Client y Org
+        // Client & Org
         allCols.putIfAbsent("AD_Client_ID",
                 firstNonZero(template.getAD_Client_ID(),
                         parseIntSafe(String.valueOf(allCols.get("AD_Client_ID"))),
@@ -418,7 +423,7 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
                 firstNonZero(template.getAD_Org_ID(),
                         parseIntSafe(String.valueOf(allCols.get("AD_Org_ID"))),
                         Env.getAD_Org_ID(getCtx())));
-        // Si la tabla tiene columna IsActive, y no viene en el archivo, poner 'Y'
+        // If the table has IsActive column, and it's not in the file, set 'Y'
         Integer isActiveCol = DB.getSQLValue(
                 get_TrxName(),
                 "SELECT COUNT(*) FROM AD_Column WHERE AD_Table_ID=(SELECT AD_Table_ID FROM AD_Table WHERE TableName=?) AND ColumnName='IsActive'",
@@ -427,7 +432,7 @@ public class AIT_ImportFile extends AIT_ImportFileAbstract {
             allCols.putIfAbsent("IsActive", "Y");
         }
 
-        // Usuario y timestamps
+        // User and timestamps
         int userId = Env.getAD_User_ID(getCtx());
         Timestamp now = new Timestamp(System.currentTimeMillis());
 
